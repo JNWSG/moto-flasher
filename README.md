@@ -1,3 +1,5 @@
+### Termux Script
+
 ### Run adb and fastboot in Termux without root permissions!
 
 **official** [Repo](https://github.com/nohajc/termux-adb) **by:** [nohajc](https://github.com/nohajc)
@@ -7,6 +9,8 @@
 ### Required APK
 
 Install [Termux](https://f-droid.org/en/packages/com.termux/) & [Termux-api](https://f-droid.org/en/packages/com.termux.api/)
+
+[matarial files](https://f-droid.org/en/packages/me.zhanghai.android.files/)
 
 Download This apk & install & run Termux then 
 
