@@ -1,9 +1,8 @@
 #!/data/data/com.termux/files/usr/bin/bash
 
 # ============================================================
-#          MOTOROLA ROM FLASHER
-#                 by JINWOO
-#          Telegram: JNW_SG
+#              MOTOROLA ROM FLASHER
+#                     by JINWOO
 # ============================================================
 
 GREEN=$'\033[0;32m'
@@ -11,28 +10,112 @@ RED=$'\033[0;31m'
 YELLOW=$'\033[1;33m'
 RESET=$'\033[0m'
 
+# ============================================================
+# RAINBOW COLORS
+# ============================================================
+
+RAINBOW_COLORS=(
+    $'\033[0;31m'    # Red
+    $'\033[0;33m'    # Yellow
+    $'\033[0;32m'    # Green
+    $'\033[0;36m'    # Cyan
+    $'\033[0;34m'    # Blue
+    $'\033[0;35m'    # Magenta
+)
+
+RAINBOW_INDEX=0
+
+rainbow_print() {
+    local message="$1"
+    local color="${RAINBOW_COLORS[$RAINBOW_INDEX]}"
+
+    RAINBOW_INDEX=$(( (RAINBOW_INDEX + 1) % ${#RAINBOW_COLORS[@]} ))
+
+    printf '%s%s%s\n' "$color" "$message" "$RESET"
+}
+
+rainbow_printf() {
+    local message="$1"
+    shift
+
+    local color="${RAINBOW_COLORS[$RAINBOW_INDEX]}"
+
+    RAINBOW_INDEX=$(( (RAINBOW_INDEX + 1) % ${#RAINBOW_COLORS[@]} ))
+
+    printf '%s%s%s' "$color" "$(printf "$message" "$@")" "$RESET"
+}
+
+rainbow_prompt() {
+    local message="$1"
+    local color="${RAINBOW_COLORS[$RAINBOW_INDEX]}"
+
+    RAINBOW_INDEX=$(( (RAINBOW_INDEX + 1) % ${#RAINBOW_COLORS[@]} ))
+
+    printf '%s%s%s' "$color" "$message" "$RESET"
+}
+
+rainbow_progress() {
+    local message="$1"
+    local color="${RAINBOW_COLORS[$RAINBOW_INDEX]}"
+
+    RAINBOW_INDEX=$(( (RAINBOW_INDEX + 1) % ${#RAINBOW_COLORS[@]} ))
+
+    printf '\r\033[K%s%s%s' "$color" "$message" "$RESET"
+}
+
+rainbow_cat() {
+    local file="$1"
+
+    [ -f "$file" ] || return 0
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        rainbow_print "$line"
+    done < "$file"
+}
+
+# ============================================================
+# FIXED COLORS
+# ============================================================
+
+green_print() {
+    printf '%s%s%s\n' "$GREEN" "$1" "$RESET"
+}
+
+red_print() {
+    printf '%s%s%s\n' "$RED" "$1" "$RESET"
+}
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+
 TOOLS_DIR="$HOME/android-tools"
 TMP_DIR="$HOME/.motorola-flasher-tmp"
 
-mkdir -p "$TOOLS_DIR" 2>/dev/null
-mkdir -p "$TMP_DIR" 2>/dev/null
+mkdir -p "$TOOLS_DIR" "$TMP_DIR"
 
-# ------------------------------------------------------------
-# Clear screen
-# ------------------------------------------------------------
+# ============================================================
+# DEVICE VARIABLES
+# ============================================================
+
+DSERIAL="N/A"
+DMODEL="N/A"
+DCODENAME="N/A"
+DBATTERY="N/A"
+DBATTERY_VOLTAGE="N/A"
+DSLOT="N/A"
+DBOOTLOADER="N/A"
+DMODE="N/A"
+
+STOCK_XML_PATH=""
+STOCK_TEMP_DIR=""
+STOCK_SOURCE_IS_ARCHIVE=0
+
+# ============================================================
+# BASIC FUNCTIONS
+# ============================================================
 
 clear_screen() {
-    if command -v clear >/dev/null 2>&1; then
-        clear
-    else
-        printf '\033[2J\033[H'
-    fi
+    clear 2>/dev/null || printf '\033c'
 }
-
-# ------------------------------------------------------------
-# Status
-# ------------------------------------------------------------
 
 success() {
     printf '%sSuccessful ✅%s\n' "$GREEN" "$RESET"
@@ -43,123 +126,116 @@ failed() {
 }
 
 warning() {
-    printf '%sWarning ⚠️%s\n' "$YELLOW" "$RESET"
+    printf '%s%s%s\n' "$YELLOW" "$1" "$RESET"
 }
 
 pause_failure() {
     printf '\n'
-    read -r -p "Press Enter to continue..."
+    rainbow_prompt "Press Enter to continue..."
+    read -r
 }
-
-# ------------------------------------------------------------
-# Resolve Android paths
-# ------------------------------------------------------------
-
-resolve_path() {
-    case "$1" in
-        /sdcard/*)
-            printf '%s\n' \
-                "$HOME/storage/shared/${1#/sdcard/}"
-            ;;
-
-        /storage/emulated/0/*)
-            printf '%s\n' \
-                "$HOME/storage/shared/${1#/storage/emulated/0/}"
-            ;;
-
-        *)
-            printf '%s\n' "$1"
-            ;;
-    esac
-}
-
-# ------------------------------------------------------------
-# Header
-# ------------------------------------------------------------
-
-show_header() {
-
-    printf '%s' "$GREEN"
-
-    printf '╔══════════════════════════════════════╗\n'
-    printf '║       MOTOROLA ROM FLASHER           ║\n'
-    printf '║              by JINWOO               ║\n'
-    printf '║                                      ║\n'
-
-    printf '║       Telegram: \033]8;;https://t.me/JNW_SG\033\\JNW_SG\033]8;;\033\\               ║\n'
-
-    printf '║                                      ║\n'
-    printf '╚══════════════════════════════════════╝\n'
-
-    printf '%s\n' "$RESET"
-}
-
-# ------------------------------------------------------------
-# Cleanup
-# ------------------------------------------------------------
-
-cleanup() {
-    rm -rf "$TMP_DIR"/* 2>/dev/null || true
-}
-
-trap cleanup EXIT
-
-# ------------------------------------------------------------
-# Check command
-# ------------------------------------------------------------
 
 command_exists() {
     command -v "$1" >/dev/null 2>&1
 }
 
-# ------------------------------------------------------------
-# Termux storage setup
-# ------------------------------------------------------------
+resolve_path() {
+    local path="$1"
+
+    case "$path" in
+        /sdcard/*)
+            printf '%s/storage/emulated/0%s\n' "$HOME" "${path#/sdcard}"
+            ;;
+        /storage/emulated/0/*)
+            printf '%s/storage/shared%s\n' "$HOME" "${path#/storage/emulated/0}"
+            ;;
+        *)
+            printf '%s\n' "$path"
+            ;;
+    esac
+}
+
+# ============================================================
+# HEADER
+# ============================================================
+
+show_header() {
+    clear_screen
+
+    rainbow_print '╔══════════════════════════════════════╗'
+    rainbow_print '║       MOTOROLA ROM FLASHER           ║'
+    rainbow_print '║              by JINWOO               ║'
+    rainbow_print '║                                      ║'
+
+    local color="${RAINBOW_COLORS[$RAINBOW_INDEX]}"
+    RAINBOW_INDEX=$(( (RAINBOW_INDEX + 1) % ${#RAINBOW_COLORS[@]} ))
+
+    printf '%s║       Telegram: \033]8;;https://t.me/JNW_SG\033\\JNW_SG\033]8;;\033\\               ║%s\n' \
+        "$color" "$RESET"
+
+    rainbow_print '║                                      ║'
+    rainbow_print '╚══════════════════════════════════════╝'
+    printf '\n'
+}
+
+# ============================================================
+# CLEANUP
+# ============================================================
+
+cleanup() {
+    # Only remove our temporary extracted files.
+    # Original user ROM ZIP/RAR/directory is never touched.
+    if [ -n "$TMP_DIR" ] && [ -d "$TMP_DIR" ]; then
+        rm -rf "$TMP_DIR"/* 2>/dev/null
+    fi
+}
+
+trap cleanup EXIT INT TERM
+
+# ============================================================
+# TERMUX STORAGE
+# ============================================================
 
 setup_termux_storage() {
-
-    if [[ -d "$HOME/storage/shared" ]]; then
+    if [ -d "$HOME/storage/shared" ]; then
         return 0
     fi
 
-    printf 'Termux storage directory not found.\n'
-    printf 'Setting up Termux storage...\n\n'
+    warning "Termux storage access is not configured."
+    rainbow_print "Setting up Termux storage..."
 
     if command_exists termux-setup-storage; then
-        termux-setup-storage >/dev/null 2>&1 || true
+        termux-setup-storage >/dev/null 2>&1
         sleep 2
     fi
 
-    mkdir -p "$HOME/storage" 2>/dev/null || true
+    if [ -d "$HOME/storage/shared" ]; then
+        success
+        return 0
+    fi
 
-    return 0
+    warning "Unable to configure Termux storage automatically."
+    return 1
 }
 
-# ------------------------------------------------------------
-# Python
-# ------------------------------------------------------------
+# ============================================================
+# PYTHON
+# ============================================================
 
 ensure_python() {
-
-    if command_exists python; then
+    if command_exists python || command_exists python3; then
         return 0
     fi
 
-    if command_exists python3; then
-        return 0
-    fi
-
-    printf 'Python not found.\n'
-    printf 'Installing Python...\n'
+    rainbow_print "Python not found."
+    rainbow_print "Installing Python..."
 
     pkg update -y >/dev/null 2>&1
     pkg install python -y >/dev/null 2>&1
 
     hash -r 2>/dev/null || true
 
-    if command_exists python ||
-       command_exists python3; then
-
+    if command_exists python || command_exists python3; then
         success
         return 0
     fi
@@ -168,18 +244,17 @@ ensure_python() {
     return 1
 }
 
-# ------------------------------------------------------------
-# Curl
-# ------------------------------------------------------------
+# ============================================================
+# CURL
+# ============================================================
 
 ensure_curl() {
-
     if command_exists curl; then
         return 0
     fi
 
-    printf 'curl not found.\n'
-    printf 'Installing curl...\n'
+    rainbow_print "curl not found."
+    rainbow_print "Installing curl..."
 
     pkg update -y >/dev/null 2>&1
     pkg install curl -y >/dev/null 2>&1
@@ -195,51 +270,28 @@ ensure_curl() {
     return 1
 }
 
-# ------------------------------------------------------------
-# Android tools directory
-# ------------------------------------------------------------
+# ============================================================
+# 7-ZIP
+# ============================================================
 
-setup_android_tools_directory() {
+ensure_7zip() {
+    if command_exists 7z; then
+        return 0
+    fi
 
-    mkdir -p "$TOOLS_DIR" 2>/dev/null
+    warning "7z archive tool not found."
+    rainbow_print "Installing archive extraction tool..."
 
-    if [[ ! -d "$TOOLS_DIR" ]]; then
+    pkg update -y >/dev/null 2>&1
 
-        printf '%sUnable to create Android tools directory.%s\n' \
-            "$RED" \
-            "$RESET"
-
+    if ! pkg install p7zip -y >/dev/null 2>&1; then
+        failed
         return 1
     fi
 
-    chmod 755 "$TOOLS_DIR" 2>/dev/null || true
-
-    return 0
-}
-
-# ------------------------------------------------------------
-# Install ADB + Fastboot
-# ------------------------------------------------------------
-
-install_adb_fastboot() {
-
-    printf '\n'
-    printf 'ADB/Fastboot not found.\n'
-    printf 'Installing ADB + Fastboot...\n\n'
-
-    ensure_curl || return 1
-
-    curl -s \
-        https://raw.githubusercontent.com/offici5l/termux-adb-fastboot/main/install \
-        | bash >/dev/null 2>&1
-
     hash -r 2>/dev/null || true
 
-    sleep 1
-
-    if command_exists adb &&
-       command_exists fastboot; then
-
+    if command_exists 7z; then
         success
         return 0
     fi
@@ -248,13 +300,46 @@ install_adb_fastboot() {
     return 1
 }
 
-# ------------------------------------------------------------
-# Setup ADB/Fastboot
-# ------------------------------------------------------------
+# ============================================================
+# ANDROID TOOLS DIRECTORY
+# ============================================================
+
+setup_android_tools_directory() {
+    mkdir -p "$TOOLS_DIR"
+
+    case ":$PATH:" in
+        *":$TOOLS_DIR:"*)
+            ;;
+        *)
+            export PATH="$TOOLS_DIR:$PATH"
+            ;;
+    esac
+}
+
+# ============================================================
+# ADB / FASTBOOT INSTALL
+# ============================================================
+
+install_adb_fastboot() {
+    warning "ADB/Fastboot tools not found."
+    rainbow_print "Installing Android tools..."
+
+    if ! command_exists curl; then
+        ensure_curl || return 1
+    fi
+
+    if ! curl -s https://raw.githubusercontent.com/offici5l/termux-adb-fastboot/main/install | bash; then
+        failed
+        return 1
+    fi
+
+    hash -r 2>/dev/null || true
+
+    return 0
+}
 
 ensure_android_tools() {
-
-    setup_android_tools_directory || return 1
+    setup_android_tools_directory
 
     local adb_path=""
     local fastboot_path=""
@@ -267,112 +352,63 @@ ensure_android_tools() {
         fastboot_path="$(command -v fastboot)"
     fi
 
-    if [[ -z "$adb_path" ||
-          -z "$fastboot_path" ]]; then
-
+    if [ -z "$adb_path" ] || [ -z "$fastboot_path" ]; then
         install_adb_fastboot || return 1
-
-        adb_path="$(
-            command -v adb 2>/dev/null || true
-        )"
-
-        fastboot_path="$(
-            command -v fastboot 2>/dev/null || true
-        )"
     fi
-
-    if [[ -z "$adb_path" ||
-          -z "$fastboot_path" ]]; then
-
-        printf '%sADB/Fastboot installation failed.%s\n' \
-            "$RED" \
-            "$RESET"
-
-        return 1
-    fi
-
-    chmod +x "$adb_path" 2>/dev/null || true
-    chmod +x "$fastboot_path" 2>/dev/null || true
-
-    ln -sf "$adb_path" \
-        "$TOOLS_DIR/adb"
-
-    ln -sf "$fastboot_path" \
-        "$TOOLS_DIR/fastboot"
-
-    chmod +x "$TOOLS_DIR/adb" 2>/dev/null || true
-    chmod +x "$TOOLS_DIR/fastboot" 2>/dev/null || true
-
-    case ":$PATH:" in
-        *":$TOOLS_DIR:"*)
-            ;;
-        *)
-            export PATH="$TOOLS_DIR:$PATH"
-            ;;
-    esac
 
     hash -r 2>/dev/null || true
 
-    if command_exists adb &&
-       command_exists fastboot; then
-        return 0
+    if command_exists adb; then
+        ln -sf "$(command -v adb)" "$TOOLS_DIR/adb" 2>/dev/null || true
     fi
 
-    if [[ -x "$TOOLS_DIR/adb" &&
-          -x "$TOOLS_DIR/fastboot" ]]; then
-        return 0
+    if command_exists fastboot; then
+        ln -sf "$(command -v fastboot)" "$TOOLS_DIR/fastboot" 2>/dev/null || true
     fi
 
-    return 1
+    export PATH="$TOOLS_DIR:$PATH"
+
+    if ! command_exists adb || ! command_exists fastboot; then
+        failed
+        return 1
+    fi
+
+    return 0
 }
 
-# ------------------------------------------------------------
-# Startup setup
-# ------------------------------------------------------------
+# ============================================================
+# STARTUP SETUP
+# ============================================================
 
 startup_setup() {
+    setup_termux_storage >/dev/null 2>&1 || true
 
-    printf '%sChecking required environment...%s\n\n' \
-        "$GREEN" \
-        "$RESET"
+    if ! ensure_python; then
+        failed
+        rainbow_print "Python setup failed."
+        return 1
+    fi
 
-    setup_termux_storage
+    if ! ensure_curl; then
+        failed
+        rainbow_print "curl setup failed."
+        return 1
+    fi
 
-    ensure_python || exit 1
+    if ! ensure_android_tools; then
+        failed
+        rainbow_print "Android tools setup failed."
+        return 1
+    fi
 
-    ensure_curl || exit 1
-
-    ensure_android_tools || exit 1
-
-    mkdir -p "$TOOLS_DIR" "$TMP_DIR"
-
-    chmod 755 \
-        "$TOOLS_DIR" \
-        "$TMP_DIR" \
-        2>/dev/null || true
-
-    printf '\n'
+    return 0
 }
 
 # ============================================================
-# DEVICE INFORMATION
+# DEVICE INFO
 # ============================================================
 
-DSERIAL="N/A"
-DMODEL="N/A"
-DCODENAME="N/A"
-DBATTERY="N/A"
-DBATTERY_VOLTAGE="N/A"
-DSLOT="N/A"
-DBOOTLOADER="N/A"
-DMODE="N/A"
-
-# ------------------------------------------------------------
-# Reset device information
-# ------------------------------------------------------------
-
 reset_device_info() {
-
     DSERIAL="N/A"
     DMODEL="N/A"
     DCODENAME="N/A"
@@ -383,442 +419,250 @@ reset_device_info() {
     DMODE="N/A"
 }
 
-# ------------------------------------------------------------
-# Get ADB property
-# ------------------------------------------------------------
+show_device_info() {
+    printf '\n'
+    rainbow_print "Device Information"
+    rainbow_print "──────────────────────────────────────"
 
-adb_prop() {
+    [ "$DSERIAL" != "N/A" ] &&
+        rainbow_print "Serial        : $DSERIAL"
 
-    local prop="$1"
-    local value
+    [ "$DMODEL" != "N/A" ] &&
+        rainbow_print "Model         : $DMODEL"
 
-    value="$(
-        adb shell getprop "$prop" 2>/dev/null |
-        tr -d '\r' |
-        head -n 1
-    )"
+    [ "$DCODENAME" != "N/A" ] &&
+        rainbow_print "Codename      : $DCODENAME"
 
-    if [[ -n "$value" ]]; then
-        printf '%s\n' "$value"
-    else
-        printf 'N/A\n'
-    fi
+    [ "$DBATTERY" != "N/A" ] &&
+        rainbow_print "Battery       : $DBATTERY"
+
+    [ "$DBATTERY_VOLTAGE" != "N/A" ] &&
+        rainbow_print "Voltage       : $DBATTERY_VOLTAGE"
+
+    [ "$DSLOT" != "N/A" ] &&
+        rainbow_print "Slot          : $DSLOT"
+
+    [ "$DBOOTLOADER" != "N/A" ] &&
+        rainbow_print "Bootloader    : $DBOOTLOADER"
+
+    [ "$DMODE" != "N/A" ] &&
+        rainbow_print "Mode          : $DMODE"
+
+    rainbow_print "──────────────────────────────────────"
 }
 
-# ------------------------------------------------------------
-# Get Fastboot variable
-# ------------------------------------------------------------
-
-fastboot_var() {
-
-    local var="$1"
-    local output
-    local value
-
-    output="$(
-        fastboot getvar "$var" 2>&1
-    )"
-
-    value="$(
-        printf '%s\n' "$output" |
-        sed -n -E \
-            -e "s/^\(bootloader\)[[:space:]]*${var}:[[:space:]]*(.*)$/\1/p" \
-            -e "s/^${var}:[[:space:]]*(.*)$/\1/p" |
-        head -n 1
-    )"
-
-    if [[ -n "$value" ]]; then
-        printf '%s\n' "$value"
-    else
-        printf 'N/A\n'
-    fi
-}
-
-# ------------------------------------------------------------
-# ADB battery
-# ------------------------------------------------------------
-
-adb_battery() {
-
-    local level
-
-    level="$(
-        adb shell dumpsys battery 2>/dev/null |
-        tr -d '\r' |
-        grep -m1 \
-            '^[[:space:]]*level:' |
-        sed -E \
-            's/.*level:[[:space:]]*([0-9]+).*/\1/'
-    )"
-
-    if [[ -n "$level" ]]; then
-        printf '%s%%\n' "$level"
-    else
-        printf 'N/A\n'
-    fi
-}
-
-# ------------------------------------------------------------
-# Detect normal ADB device
-# ------------------------------------------------------------
+# ============================================================
+# ADB DEVICE DETECTION
+# ============================================================
 
 detect_adb_device() {
-
     reset_device_info
 
-    local line
     local serial
+    serial="$(adb get-serialno 2>/dev/null)"
 
-    line="$(
-        adb devices 2>/dev/null |
-        awk '$2 == "device" {print; exit}'
-    )"
-
-    if [[ -z "$line" ]]; then
+    if [ -z "$serial" ] || [ "$serial" = "unknown" ]; then
         return 1
     fi
 
-    serial="$(
-        printf '%s\n' "$line" |
-        awk '{print $1}'
-    )"
-
-    DSERIAL="${serial:-N/A}"
+    DSERIAL="$serial"
 
     DMODE="ADB"
 
-    DMODEL="$(adb_prop ro.product.model)"
+    DMODEL="$(adb shell getprop ro.product.model 2>/dev/null | tr -d '\r')"
+    DCODENAME="$(adb shell getprop ro.product.device 2>/dev/null | tr -d '\r')"
 
-    DCODENAME="$(adb_prop ro.product.device)"
-
-    DBATTERY="$(adb_battery)"
-
-    DBATTERY_VOLTAGE="$(
-        adb_prop ro.boot.battery.voltage
+    DBATTERY="$(
+        adb shell dumpsys battery 2>/dev/null |
+        awk -F': ' '/level:/ {print $2; exit}' |
+        tr -d '\r'
     )"
 
-    if [[ "$DBATTERY_VOLTAGE" != "N/A" ]]; then
+    if [ -n "$DBATTERY" ]; then
+        DBATTERY="${DBATTERY}%"
+    else
+        DBATTERY="N/A"
+    fi
+
+    DBATTERY_VOLTAGE="$(
+        adb shell dumpsys battery 2>/dev/null |
+        awk -F': ' '/voltage:/ {print $2; exit}' |
+        tr -d '\r'
+    )"
+
+    if [ -n "$DBATTERY_VOLTAGE" ]; then
         DBATTERY_VOLTAGE="${DBATTERY_VOLTAGE} mV"
+    else
+        DBATTERY_VOLTAGE="N/A"
     fi
 
     DSLOT="$(
-        adb_prop ro.boot.slot_suffix
+        adb shell getprop ro.boot.slot_suffix 2>/dev/null |
+        tr -d '\r'
     )"
 
-    if [[ "$DSLOT" == "_"* ]]; then
-        DSLOT="${DSLOT#_}"
-    fi
-
-    if [[ -z "$DSLOT" ]]; then
+    if [ -z "$DSLOT" ]; then
         DSLOT="N/A"
     fi
 
     DBOOTLOADER="$(
-        adb_prop ro.boot.verifiedbootstate
+        adb shell getprop ro.boot.flash.locked 2>/dev/null |
+        tr -d '\r'
     )"
 
-    if [[ "$DBOOTLOADER" == "green" ]]; then
-        DBOOTLOADER="Locked"
-    elif [[ "$DBOOTLOADER" == "orange" ]]; then
-        DBOOTLOADER="Unlocked"
-    fi
-
-    return 0
-}
-
-# ------------------------------------------------------------
-# Detect ADB sideload device
-# ------------------------------------------------------------
-
-detect_adb_sideload_device() {
-
-    reset_device_info
-
-    local line
-    local serial
-
-    line="$(
-        adb devices 2>/dev/null |
-        awk '$2 == "sideload" {print; exit}'
-    )"
-
-    if [[ -z "$line" ]]; then
-        return 1
-    fi
-
-    serial="$(
-        printf '%s\n' "$line" |
-        awk '{print $1}'
-    )"
-
-    DSERIAL="${serial:-N/A}"
-
-    DMODE="ADB SIDELOAD"
-
-    # Other information is unavailable in sideload mode.
-    DMODEL="N/A"
-    DCODENAME="N/A"
-    DBATTERY="N/A"
-    DBATTERY_VOLTAGE="N/A"
-    DSLOT="N/A"
-    DBOOTLOADER="N/A"
-
-    return 0
-}
-
-# ------------------------------------------------------------
-# Detect Fastboot device
-# ------------------------------------------------------------
-
-detect_fastboot_device() {
-
-    reset_device_info
-
-    local devices
-    local securestate
-
-    devices="$(
-        fastboot devices 2>/dev/null
-    )"
-
-    if [[ -z "$devices" ]]; then
-        return 1
-    fi
-
-    DSERIAL="$(fastboot_var serialno)"
-
-    DMODEL="$(fastboot_var sku)"
-
-    DCODENAME="$(fastboot_var product)"
-
-    DBATTERY="N/A"
-
-    DBATTERY_VOLTAGE="$(
-        fastboot_var battery-voltage
-    )"
-
-    if [[ "$DBATTERY_VOLTAGE" != "N/A" ]]; then
-        DBATTERY_VOLTAGE="${DBATTERY_VOLTAGE} mV"
-    fi
-
-    DSLOT="$(fastboot_var current-slot)"
-
-    securestate="$(fastboot_var securestate)"
-
-    case "$securestate" in
-
-        flashing_unlocked|unlocked)
+    case "$DBOOTLOADER" in
+        0)
             DBOOTLOADER="Unlocked"
             ;;
-
-        flashing_locked|locked)
+        1)
             DBOOTLOADER="Locked"
             ;;
-
         *)
             DBOOTLOADER="N/A"
             ;;
     esac
 
-    DMODE="FASTBOOT"
-
     return 0
 }
 
-# ------------------------------------------------------------
-# Show device information
-# ------------------------------------------------------------
+# ============================================================
+# ADB SIDELOAD DEVICE DETECTION
+# ============================================================
 
-show_device_info() {
+detect_adb_sideload_device() {
+    reset_device_info
 
-    printf '%s' "$GREEN"
+    local serial
+    serial="$(adb get-serialno 2>/dev/null)"
 
-    printf '╔══════════════════════════════════════╗\n'
-    printf '║          DEVICE INFORMATION          ║\n'
-    printf '╠══════════════════════════════════════╣\n'
-
-    # --------------------------------------------------------
-    # Only show values which are NOT N/A.
-    # --------------------------------------------------------
-
-    if [[ "$DSERIAL" != "N/A" ]]; then
-        printf '║  Serial       : %-20s ║\n' \
-            "$DSERIAL"
-    fi
-
-    if [[ "$DMODEL" != "N/A" ]]; then
-        printf '║  Model        : %-20s ║\n' \
-            "$DMODEL"
-    fi
-
-    if [[ "$DCODENAME" != "N/A" ]]; then
-        printf '║  Codename     : %-20s ║\n' \
-            "$DCODENAME"
-    fi
-
-    if [[ "$DBATTERY" != "N/A" ]]; then
-        printf '║  Battery      : %-20s ║\n' \
-            "$DBATTERY"
-    fi
-
-    if [[ "$DBATTERY_VOLTAGE" != "N/A" ]]; then
-        printf '║  Voltage      : %-20s ║\n' \
-            "$DBATTERY_VOLTAGE"
-    fi
-
-    if [[ "$DSLOT" != "N/A" ]]; then
-        printf '║  Slot         : %-20s ║\n' \
-            "$DSLOT"
-    fi
-
-    if [[ "$DBOOTLOADER" != "N/A" ]]; then
-        printf '║  Bootloader   : %-20s ║\n' \
-            "$DBOOTLOADER"
-    fi
-
-    if [[ "$DMODE" != "N/A" ]]; then
-        printf '║  Mode         : %-20s ║\n' \
-            "$DMODE"
-    fi
-
-    printf '║                                      ║\n'
-    printf '╚══════════════════════════════════════╝\n'
-
-    printf '%s\n' "$RESET"
-}
-
-# ------------------------------------------------------------
-# Require Fastboot
-# ------------------------------------------------------------
-
-require_fastboot_device() {
-
-    if ! detect_fastboot_device; then
-
-        printf '%sFastboot device not found.%s\n' \
-            "$RED" \
-            "$RESET"
-
-        printf \
-            'Put the phone into Fastboot mode and try again.\n'
-
+    if [ -z "$serial" ] || [ "$serial" = "unknown" ]; then
         return 1
     fi
 
-    show_device_info
+    DSERIAL="$serial"
+    DMODE="ADB Sideload"
 
     return 0
 }
 
-# ------------------------------------------------------------
-# Require normal ADB
-# ------------------------------------------------------------
+# ============================================================
+# FASTBOOT DEVICE DETECTION
+# ============================================================
+
+detect_fastboot_device() {
+    reset_device_info
+
+    local devices
+    local serial
+
+    devices="$(fastboot devices 2>/dev/null)"
+
+    serial="$(printf '%s\n' "$devices" | awk 'NR==1 {print $1}')"
+
+    if [ -z "$serial" ]; then
+        return 1
+    fi
+
+    DSERIAL="$serial"
+    DMODE="Fastboot"
+
+    local value
+
+    value="$(fastboot getvar product 2>&1 | sed -n 's/.*product: //p' | tail -n1)"
+    [ -n "$value" ] && DCODENAME="$value"
+
+    value="$(fastboot getvar product-name 2>&1 | sed -n 's/.*product-name: //p' | tail -n1)"
+    [ -n "$value" ] && DMODEL="$value"
+
+    value="$(fastboot getvar current-slot 2>&1 | sed -n 's/.*current-slot: //p' | tail -n1)"
+    [ -n "$value" ] && DSLOT="$value"
+
+    value="$(fastboot getvar unlocked 2>&1 | sed -n 's/.*unlocked: //p' | tail -n1)"
+
+    case "$value" in
+        yes)
+            DBOOTLOADER="Unlocked"
+            ;;
+        no)
+            DBOOTLOADER="Locked"
+            ;;
+    esac
+
+    return 0
+}
+
+# ============================================================
+# REQUIRE DEVICE FUNCTIONS
+# ============================================================
 
 require_adb_device() {
-
     if ! detect_adb_device; then
-
-        printf '%sADB device not found.%s\n' \
-            "$RED" \
-            "$RESET"
-
-        printf \
-            'Connect the phone with USB debugging enabled.\n'
-
+        failed
+        red_print "No ADB device detected."
         return 1
     fi
-
-    show_device_info
 
     return 0
 }
 
-# ------------------------------------------------------------
-# Require ADB sideload
-# ------------------------------------------------------------
-
-require_adb_sideload() {
-
+require_adb_sideload_device() {
     if ! detect_adb_sideload_device; then
-
-        printf '%sADB sideload device not found.%s\n' \
-            "$RED" \
-            "$RESET"
-
-        printf \
-            'Boot the phone into ADB Sideload mode and try again.\n'
-
+        failed
+        red_print "No ADB sideload device detected."
         return 1
     fi
-
-    show_device_info
 
     return 0
 }
 
-# ------------------------------------------------------------
-# Device checks
-# ------------------------------------------------------------
+require_fastboot_device() {
+    if ! detect_fastboot_device; then
+        failed
+        red_print "No Fastboot device detected."
+        return 1
+    fi
 
-check_fastboot_device() {
-
-    [[ -n "$(fastboot devices 2>/dev/null)" ]]
+    return 0
 }
+
+# ============================================================
+# CHECK FUNCTIONS
+# ============================================================
 
 check_adb_device() {
-
-    local state
-
-    state="$(
-        adb get-state 2>/dev/null |
-        tr -d '\r\n'
-    )"
-
-    [[ "$state" == "device" ]]
+    detect_adb_device
 }
 
-check_adb_sideload() {
+check_adb_sideload_device() {
+    detect_adb_sideload_device
+}
 
-    adb devices 2>/dev/null |
-        awk '
-            NR > 1 && $2 == "sideload" {
-                found=1
-            }
-
-            END {
-                exit(found ? 0 : 1)
-            }
-        '
+check_fastboot_device() {
+    detect_fastboot_device
 }
 
 # ============================================================
-# STOCK ROM
+# FIND FLASHFILE.XML
 # ============================================================
-
-# ------------------------------------------------------------
-# Find flashfile.xml
-# ------------------------------------------------------------
 
 find_flashfile_xml() {
-
-    local dir="$1"
+    local source="$1"
     local found
 
-    if [[ -f "$dir/flashfile.xml" ]]; then
-        printf '%s\n' "$dir/flashfile.xml"
+    if [ -f "$source/flashfile.xml" ]; then
+        printf '%s\n' "$source/flashfile.xml"
         return 0
     fi
 
     found="$(
-        find "$dir" \
+        find "$source" \
             -type f \
-            -iname 'flashfile.xml' \
+            -iname "flashfile.xml" \
             -print \
-            -quit \
-            2>/dev/null
+            -quit 2>/dev/null
     )"
 
-    if [[ -n "$found" ]]; then
+    if [ -n "$found" ]; then
         printf '%s\n' "$found"
         return 0
     fi
@@ -826,25 +670,144 @@ find_flashfile_xml() {
     return 1
 }
 
-# ------------------------------------------------------------
-# Parse flashfile.xml
-# ------------------------------------------------------------
+# ============================================================
+# PREPARE STOCK ROM SOURCE
+# ============================================================
 
-parse_flashfile_xml() {
+prepare_stock_source() {
+    local input="$1"
+    local resolved
+    local extension
+    local archive_dir
+    local archive_output
+    local xml
 
-    local xml="$1"
-    local py
+    STOCK_XML_PATH=""
+    STOCK_TEMP_DIR=""
+    STOCK_SOURCE_IS_ARCHIVE=0
 
-    py="$(
-        command -v python 2>/dev/null ||
-        command -v python3 2>/dev/null
-    )"
+    resolved="$(resolve_path "$input")"
 
-    if [[ -z "$py" ]]; then
+    if [ ! -e "$resolved" ]; then
+        failed
+        rainbow_print "Stock ROM path does not exist:"
+        rainbow_print "$resolved"
         return 1
     fi
 
-    "$py" - "$xml" <<'PY'
+    # --------------------------------------------------------
+    # DIRECTORY
+    # --------------------------------------------------------
+
+    if [ -d "$resolved" ]; then
+        rainbow_print "Searching for flashfile.xml..."
+
+        xml="$(find_flashfile_xml "$resolved")"
+
+        if [ -z "$xml" ]; then
+            failed
+            rainbow_print "flashfile.xml not found in the selected directory."
+            return 1
+        fi
+
+        STOCK_XML_PATH="$xml"
+        STOCK_SOURCE_IS_ARCHIVE=0
+
+        green_print 'Founded "flashfile.xml"'
+        green_print "Using: $STOCK_XML_PATH"
+
+        return 0
+    fi
+
+    # --------------------------------------------------------
+    # ARCHIVE
+    # --------------------------------------------------------
+
+    if [ ! -f "$resolved" ]; then
+        failed
+        rainbow_print "Selected Stock ROM is not a valid file or directory."
+        return 1
+    fi
+
+    extension="${resolved##*.}"
+    extension="$(printf '%s' "$extension" | tr '[:upper:]' '[:lower:]')"
+
+    case "$extension" in
+        zip|rar|7z)
+            ;;
+        *)
+            failed
+            rainbow_print "Unsupported Stock ROM format."
+            rainbow_print "Supported: directory, ZIP, RAR, 7Z"
+            return 1
+            ;;
+    esac
+
+    # Only Stock ROM archives use 7z extraction.
+    # ADB Sideload never comes through this function.
+
+    if ! ensure_7zip; then
+        return 1
+    fi
+
+    archive_dir="$TMP_DIR/stock_archive"
+
+    rm -rf "$archive_dir" 2>/dev/null
+    mkdir -p "$archive_dir"
+
+    rainbow_print "Temporary extracting..."
+
+    archive_output="$TMP_DIR/7z_extract.log"
+
+    rm -f "$archive_output" 2>/dev/null
+
+    if ! 7z x \
+        -y \
+        "$resolved" \
+        "-o$archive_dir" \
+        >"$archive_output" 2>&1; then
+
+        failed
+
+        printf '\n'
+        rainbow_print "7z error:"
+        rainbow_cat "$archive_output"
+
+        return 1
+    fi
+
+    xml="$(find_flashfile_xml "$archive_dir")"
+
+    if [ -z "$xml" ]; then
+        failed
+        rainbow_print "flashfile.xml not found in extracted Stock ROM."
+        return 1
+    fi
+
+    STOCK_XML_PATH="$xml"
+    STOCK_TEMP_DIR="$archive_dir"
+    STOCK_SOURCE_IS_ARCHIVE=1
+
+    green_print 'Founded "flashfile.xml"'
+    green_print "Using: $STOCK_XML_PATH"
+
+    return 0
+}
+
+# ============================================================
+# PARSE FLASHFILE.XML
+# ============================================================
+
+parse_flashfile_xml() {
+    local xml="$1"
+
+    if [ ! -f "$xml" ]; then
+        return 1
+    fi
+
+    local parser="$TMP_DIR/parse_flashfile.py"
+
+    cat > "$parser" <<'PY'
 import sys
 import xml.etree.ElementTree as ET
 
@@ -853,471 +816,142 @@ xml_file = sys.argv[1]
 try:
     root = ET.parse(xml_file).getroot()
 except Exception as e:
-    print(
-        f"XML_PARSE_ERROR\t{e}",
-        file=sys.stderr
-    )
+    print(f"ERROR|Unable to parse flashfile.xml: {e}")
     sys.exit(1)
 
-steps = root.find("steps")
+steps = root.find(".//steps")
 
 if steps is None:
-    print(
-        "XML_PARSE_ERROR\t<steps> not found",
-        file=sys.stderr
-    )
+    print("ERROR|<steps> section not found in flashfile.xml")
     sys.exit(1)
 
 for step in steps.findall("step"):
+    operation = (step.attrib.get("operation") or "").strip()
+    filename = (step.attrib.get("filename") or "").strip()
 
-    operation = (
-        step.get("operation") or ""
-    ).strip()
+    if not operation:
+        continue
 
-    if operation == "flash":
-
-        partition = (
-            step.get("partition") or ""
-        ).strip()
-
-        filename = (
-            step.get("filename") or ""
-        ).strip()
-
-        if not partition or not filename:
-
-            print(
-                "XML_PARSE_ERROR\tflash step missing "
-                "partition/filename",
-                file=sys.stderr
-            )
-
-            sys.exit(1)
-
-        print(
-            f"flash\t{partition}\t{filename}"
+    print(
+        "STEP|{}|{}".format(
+            operation,
+            filename.replace("|", "")
         )
-
-    elif operation == "erase":
-
-        partition = (
-            step.get("partition") or ""
-        ).strip()
-
-        if not partition:
-
-            print(
-                "XML_PARSE_ERROR\terase step missing "
-                "partition",
-                file=sys.stderr
-            )
-
-            sys.exit(1)
-
-        print(
-            f"erase\t{partition}"
-        )
-
-    elif operation == "getvar":
-
-        var = (
-            step.get("var") or ""
-        ).strip()
-
-        if not var:
-
-            print(
-                "XML_PARSE_ERROR\tgetvar step missing var",
-                file=sys.stderr
-            )
-
-            sys.exit(1)
-
-        print(
-            f"getvar\t{var}"
-        )
-
-    elif operation == "oem":
-
-        var = (
-            step.get("var") or ""
-        ).strip()
-
-        if not var:
-
-            print(
-                "XML_PARSE_ERROR\toem step missing var",
-                file=sys.stderr
-            )
-
-            sys.exit(1)
-
-        print(
-            f"oem\t{var}"
-        )
-
-    else:
-
-        print(
-            f"unsupported\t{operation}"
-        )
+    )
 PY
+
+    if ! python "$parser" "$xml"; then
+        return 1
+    fi
 }
 
-# ------------------------------------------------------------
-# Count flash operations
-# ------------------------------------------------------------
+# ============================================================
+# VALIDATE STOCK XML FILES
+# ============================================================
 
-count_flash_steps() {
-
-    local plan="$1"
-
-    awk -F '\t' '
-        $1 == "flash" {
-            count++
-        }
-
-        END {
-            print count + 0
-        }
-    ' "$plan"
-}
-
-# ------------------------------------------------------------
-# Validate XML-referenced files
-# ------------------------------------------------------------
-
-validate_flash_files() {
-
+validate_flashfile_files() {
     local xml="$1"
-    local plan="$2"
-
     local xml_dir
+    local operation
     local filename
     local fullpath
     local missing=0
 
-    local type
-    local partition
-
     xml_dir="$(dirname "$xml")"
 
-    while IFS=$'\t' read -r \
-        type \
-        partition \
-        filename
-    do
+    while IFS='|' read -r tag operation filename; do
+        [ "$tag" = "STEP" ] || continue
 
-        [[ "$type" != "flash" ]] && continue
+        case "$operation" in
+            flash)
+                if [ -z "$filename" ]; then
+                    continue
+                fi
 
-        fullpath="$xml_dir/$filename"
+                fullpath="$xml_dir/$filename"
 
-        if [[ ! -f "$fullpath" ]]; then
+                if [ ! -f "$fullpath" ]; then
+                    failed
+                    rainbow_print "Missing flash file: $fullpath"
+                    missing=1
+                fi
+                ;;
+        esac
+    done < <(parse_flashfile_xml "$xml")
 
-            printf '%sMissing file: %s%s\n' \
-                "$RED" \
-                "$filename" \
-                "$RESET"
-
-            missing=1
-        fi
-
-    done < "$plan"
-
-    if (( missing != 0 )); then
+    if [ "$missing" -ne 0 ]; then
         return 1
     fi
 
     return 0
 }
 
-# ------------------------------------------------------------
-# Flash normal partition
-# ------------------------------------------------------------
+# ============================================================
+# FLASH SINGLE FILE
+# ============================================================
 
-flash_partition_with_progress() {
-
+flash_single_file() {
     local partition="$1"
-    local image="$2"
-    local step_index="$3"
-    local flash_total="$4"
+    local file="$2"
+    local output_file="$TMP_DIR/fastboot_output.log"
 
-    local output_file="$TMP_DIR/fastboot_output"
+    rm -f "$output_file" 2>/dev/null
 
-    local pid
-    local start_percent
-    local end_percent
-    local progress
-    local rc
+    if ! fastboot flash "$partition" "$file" >"$output_file" 2>&1; then
+        printf '%sFlashing failed: %s%s\n' \
+            "$RED" "$partition" "$RESET"
 
-    : > "$output_file"
+        printf '\n'
+        rainbow_cat "$output_file"
 
-    if (( flash_total <= 0 )); then
-
-        start_percent=1
-        end_percent=100
-
-    else
-
-        start_percent=$(
-            printf '%d' \
-                "$(( (step_index - 1) * 100 / flash_total + 1 ))"
-        )
-
-        end_percent=$(
-            printf '%d' \
-                "$(( step_index * 100 / flash_total ))"
-        )
-
-        (( end_percent > 100 )) &&
-            end_percent=100
-
-        (( start_percent > end_percent )) &&
-            start_percent=end_percent
-    fi
-
-    progress="$start_percent"
-
-    printf '\r\033[K%sFlashing %s — %d%%%s' \
-        "$GREEN" \
-        "$partition" \
-        "$progress" \
-        "$RESET"
-
-    (
-        fastboot flash \
-            "$partition" \
-            "$image" \
-            >"$output_file" \
-            2>&1
-    ) &
-
-    pid=$!
-
-    while kill -0 "$pid" 2>/dev/null; do
-
-        if (( progress < end_percent )); then
-
-            progress=$((progress + 1))
-
-            printf '\r\033[K%sFlashing %s — %d%%%s' \
-                "$GREEN" \
-                "$partition" \
-                "$progress" \
-                "$RESET"
-        fi
-
-        sleep 0.12
-    done
-
-    wait "$pid"
-    rc=$?
-
-    if (( rc == 0 )); then
-
-        progress="$end_percent"
-
-        printf '\r\033[K%sFlashing %s — %d%%%s\n' \
-            "$GREEN" \
-            "$partition" \
-            "$progress" \
-            "$RESET"
-
-        return 0
-    fi
-
-    printf '\r\033[K%sFlashing %s — Failed ❌%s\n' \
-        "$RED" \
-        "$partition" \
-        "$RESET"
-
-    return "$rc"
-}
-
-# ------------------------------------------------------------
-# Super group counter
-# ------------------------------------------------------------
-
-SUPER_GROUP_COUNT=0
-
-# ------------------------------------------------------------
-# Flash consecutive super chunks
-# ------------------------------------------------------------
-
-flash_super_group() {
-
-    local plan_line_index="$1"
-    local flash_start_index="$2"
-    local flash_total="$3"
-    local xml_dir="$4"
-
-    local line_type
-    local partition
-    local filename
-    local fullpath
-
-    local chunk_count=0
-    local chunk_index=0
-
-    local start_percent
-    local end_percent
-    local progress
-    local completed_percent
-
-    local output_file
-    local pid
-    local rc
-
-    SUPER_GROUP_COUNT=0
-
-    while IFS=$'\t' read -r \
-        line_type \
-        partition \
-        filename
-    do
-
-        if [[ "$line_type" != "flash" ||
-              "$partition" != "super" ]]; then
-            break
-        fi
-
-        chunk_count=$((chunk_count + 1))
-
-    done < <(
-        tail -n +"$plan_line_index" \
-            "$TMP_DIR/stock_plan"
-    )
-
-    if (( chunk_count <= 0 )); then
         return 1
     fi
 
-    SUPER_GROUP_COUNT="$chunk_count"
+    return 0
+}
 
-    start_percent=$(
-        printf '%d' \
-            "$(( (flash_start_index - 1) * 100 / flash_total + 1 ))"
-    )
+# ============================================================
+# FLASH SUPER SPARSE CHUNK GROUP
+# ============================================================
 
-    end_percent=$(
-        printf '%d' \
-            "$(( (flash_start_index + chunk_count - 1) * 100 / flash_total ))"
-    )
+flash_super_group() {
+    local xml_dir="$1"
+    shift
 
-    (( end_percent > 100 )) &&
-        end_percent=100
+    local chunks=("$@")
+    local total="${#chunks[@]}"
+    local index=0
+    local chunk
+    local output_file="$TMP_DIR/fastboot_super.log"
 
-    (( start_percent > end_percent )) &&
-        start_percent=end_percent
+    if [ "$total" -eq 0 ]; then
+        return 0
+    fi
 
-    progress="$start_percent"
+    rainbow_printf "Flashing super"
 
-    output_file="$TMP_DIR/super_output"
+    for chunk in "${chunks[@]}"; do
+        index=$((index + 1))
 
-    : > "$output_file"
+        rm -f "$output_file" 2>/dev/null
 
-    printf '\r\033[K%sFlashing super — %d%%%s' \
-        "$GREEN" \
-        "$progress" \
-        "$RESET"
+        if ! fastboot flash super "$xml_dir/$chunk" >"$output_file" 2>&1; then
+            printf '\n'
+            failed
+            rainbow_print "Flashing super failed at $chunk."
 
-    while IFS=$'\t' read -r \
-        line_type \
-        partition \
-        filename
-    do
+            printf '\n'
+            rainbow_cat "$output_file"
 
-        if [[ "$line_type" != "flash" ||
-              "$partition" != "super" ]]; then
-            break
+            return 1
         fi
 
-        chunk_index=$((chunk_index + 1))
+        local progress=$((index * 100 / total))
 
-        fullpath="$xml_dir/$filename"
+        rainbow_progress "Flashing super — $progress%"
+    done
 
-        (
-            fastboot flash \
-                super \
-                "$fullpath" \
-                >>"$output_file" \
-                2>&1
-        ) &
-
-        pid=$!
-
-        while kill -0 "$pid" 2>/dev/null; do
-
-            completed_percent=$(
-                printf '%d' \
-                    "$(( start_percent +
-                         ((chunk_index - 1) *
-                          (end_percent - start_percent) /
-                          chunk_count) ))"
-            )
-
-            printf '\r\033[K%sFlashing super — %d%%%s' \
-                "$GREEN" \
-                "$completed_percent" \
-                "$RESET"
-
-            sleep 0.12
-        done
-
-        wait "$pid"
-        rc=$?
-
-        if (( rc != 0 )); then
-
-            printf \
-                '\r\033[K%sFlashing super — Failed ❌%s\n' \
-                "$RED" \
-                "$RESET"
-
-            printf '\n%sFastboot error:%s\n' \
-                "$RED" \
-                "$RESET"
-
-            if [[ -s "$output_file" ]]; then
-
-                printf '%s' "$RED"
-
-                cat "$output_file"
-
-                printf '%s\n' "$RESET"
-            fi
-
-            return "$rc"
-        fi
-
-        progress=$(
-            printf '%d' \
-                "$(( start_percent +
-                     (chunk_index *
-                      (end_percent - start_percent) /
-                      chunk_count) ))"
-        )
-
-        (( progress > end_percent )) &&
-            progress="$end_percent"
-
-        printf '\r\033[K%sFlashing super — %d%%%s' \
-            "$GREEN" \
-            "$progress" \
-            "$RESET"
-
-    done < <(
-        tail -n +"$plan_line_index" \
-            "$TMP_DIR/stock_plan"
-    )
-
-    progress="$end_percent"
-
-    printf \
-        '\r\033[K%sFlashing super — %d%%%s\n' \
-        "$GREEN" \
-        "$progress" \
-        "$RESET"
+    printf '\n'
 
     return 0
 }
@@ -1327,465 +961,450 @@ flash_super_group() {
 # ============================================================
 
 flash_stock_rom() {
-
     clear_screen
     show_header
 
-    printf '%s' "$GREEN"
+    rainbow_print "STOCK ROM FLASH"
+    rainbow_print "──────────────────────────────────────"
+    printf '\n'
 
-    printf '╔══════════════════════════════════════╗\n'
-    printf '║          FLASH STOCK ROM             ║\n'
-    printf '╚══════════════════════════════════════╝\n'
+    local input
+    local xml
+    local xml_dir
+    local output_file
+    local parser_output
+    local total_steps
+    local current_step
+    local progress
+    local operation
+    local filename
+    local fullpath
+    local partition
 
-    printf '%s\n\n' "$RESET"
+    rainbow_print "Enter stock ROM directory / ZIP / RAR / 7Z:"
+    rainbow_prompt ">>> "
+    read -r input
 
-    printf 'Enter stock ROM directory:\n\n'
-
-    read -r stock_dir
-
-    stock_dir="$(resolve_path "$stock_dir")"
-
-    if [[ ! -d "$stock_dir" ]]; then
-
-        printf '%sDirectory not found.%s\n' \
-            "$RED" \
-            "$RESET"
-
+    if [ -z "$input" ]; then
+        failed
+        rainbow_print "No Stock ROM path entered."
         pause_failure
         return
     fi
 
     printf '\n'
-    printf 'Searching for flashfile.xml...\n'
 
-    local xml
-
-    xml="$(find_flashfile_xml "$stock_dir")"
-
-    if [[ -z "$xml" ]]; then
-
-        printf '%sflashfile.xml not found.%s\n' \
-            "$RED" \
-            "$RESET"
-
+    if ! prepare_stock_source "$input"; then
+        printf '\n'
+        failed
+        rainbow_print "Unable to prepare stock ROM source."
         pause_failure
         return
     fi
 
-    printf '%sFounded "flashfile.xml"%s\n\n' \
-        "$GREEN" \
-        "$RESET"
+    xml="$STOCK_XML_PATH"
+    xml_dir="$(dirname "$xml")"
+
+    printf '\n'
+    rainbow_print "Checking Fastboot device..."
 
     if ! require_fastboot_device; then
         pause_failure
         return
     fi
 
+    show_device_info
+
+    printf '\n'
+    rainbow_print "Validating Stock ROM files..."
+
+    if ! validate_flashfile_files "$xml"; then
+        failed
+        rainbow_print "Stock ROM validation failed."
+        pause_failure
+        return
+    fi
+
+    green_print "Stock ROM validation successful. ✅"
+
+    parser_output="$TMP_DIR/flashfile_steps.txt"
+
+    if ! parse_flashfile_xml "$xml" > "$parser_output"; then
+        failed
+        rainbow_print "Unable to parse flashfile.xml."
+        pause_failure
+        return
+    fi
+
+    total_steps="$(
+        grep -c '^STEP|' "$parser_output" 2>/dev/null
+    )"
+
+    if [ -z "$total_steps" ] || [ "$total_steps" -eq 0 ]; then
+        failed
+        rainbow_print "No flashing steps found in flashfile.xml."
+        pause_failure
+        return
+    fi
+
+    printf '\n'
+    rainbow_print "Starting Stock ROM flashing..."
     printf '\n'
 
-    local plan="$TMP_DIR/stock_plan"
+    current_step=0
 
-    if ! parse_flashfile_xml "$xml" \
-        >"$plan" \
-        2>"$TMP_DIR/xml_error"
-    then
+    local super_chunks=()
+    local in_super_group=0
 
-        printf '%sFailed to parse flashfile.xml.%s\n' \
-            "$RED" \
-            "$RESET"
+    while IFS='|' read -r tag operation filename; do
+        [ "$tag" = "STEP" ] || continue
 
-        if [[ -s "$TMP_DIR/xml_error" ]]; then
+        if [ "$operation" = "flash" ] &&
+           printf '%s' "$filename" | grep -Eq '^super\.img_sparsechunk\.'; then
 
-            printf '%s' "$RED"
-
-            cat "$TMP_DIR/xml_error"
-
-            printf '%s\n' "$RESET"
+            super_chunks+=("$filename")
+            in_super_group=1
+            continue
         fi
 
-        pause_failure
-        return
-    fi
+        if [ "$in_super_group" -eq 1 ]; then
 
-    if grep -q '^unsupported' "$plan"; then
+            if ! flash_super_group "$xml_dir" "${super_chunks[@]}"; then
+                failed
+                rainbow_print "Stock ROM flashing failed."
+                pause_failure
+                return
+            fi
 
-        printf '%sUnsupported XML operation found.%s\n' \
-            "$RED" \
-            "$RESET"
+            super_chunks=()
+            in_super_group=0
+        fi
 
-        grep '^unsupported' "$plan"
+        current_step=$((current_step + 1))
 
-        pause_failure
-        return
-    fi
-
-    if ! validate_flash_files "$xml" "$plan"; then
-
-        pause_failure
-        return
-    fi
-
-    local flash_total
-
-    flash_total="$(count_flash_steps "$plan")"
-
-    if (( flash_total <= 0 )); then
-
-        printf \
-            '%sNo flash operations found in flashfile.xml.%s\n' \
-            "$RED" \
-            "$RESET"
-
-        pause_failure
-        return
-    fi
-
-    printf '%sFlash steps found: %d%s\n\n' \
-        "$GREEN" \
-        "$flash_total" \
-        "$RESET"
-
-    printf 'Starting stock ROM flashing...\n\n'
-
-    local xml_dir
-    local type
-    local arg1
-    local arg2
-    local fullpath
-
-    local flash_index=0
-    local plan_index=1
-    local rc
-    local super_count
-
-    xml_dir="$(dirname "$xml")"
-
-    mapfile -t PLAN_LINES < "$plan"
-
-    local plan_count="${#PLAN_LINES[@]}"
-
-    while (( plan_index <= plan_count )); do
-
-        IFS=$'\t' read -r \
-            type \
-            arg1 \
-            arg2 \
-            <<< "${PLAN_LINES[$((plan_index - 1))]}"
-
-        case "$type" in
+        case "$operation" in
 
             flash)
-
-                if [[ "$arg1" == "super" ]]; then
-
-                    flash_index=$((flash_index + 1))
-
-                    flash_super_group \
-                        "$plan_index" \
-                        "$flash_index" \
-                        "$flash_total" \
-                        "$xml_dir"
-
-                    rc=$?
-
-                    if (( rc != 0 )); then
-
-                        failed
-
-                        pause_failure
-                        return
-                    fi
-
-                    super_count="$SUPER_GROUP_COUNT"
-
-                    flash_index=$(
-                        printf '%d' \
-                            "$(( flash_index + super_count - 1 ))"
-                    )
-
-                    plan_index=$(
-                        printf '%d' \
-                            "$(( plan_index + super_count ))"
-                    )
-
+                if [ -z "$filename" ]; then
                     continue
                 fi
 
-                flash_index=$((flash_index + 1))
+                fullpath="$xml_dir/$filename"
 
-                fullpath="$xml_dir/$arg2"
+                partition="$filename"
+                partition="${partition%.img}"
 
-                flash_partition_with_progress \
-                    "$arg1" \
-                    "$fullpath" \
-                    "$flash_index" \
-                    "$flash_total"
+                case "$partition" in
+                    *.*)
+                        partition="${partition##*/}"
+                        ;;
+                esac
 
-                rc=$?
+                progress=$((current_step * 100 / total_steps))
 
-                if (( rc != 0 )); then
+                rainbow_progress \
+                    "Flashing $partition — $progress%"
 
-                    printf '\n%sFastboot error:%s\n' \
-                        "$RED" \
-                        "$RESET"
+                output_file="$TMP_DIR/fastboot_output.log"
+                rm -f "$output_file" 2>/dev/null
 
-                    if [[ -s "$TMP_DIR/fastboot_output" ]]; then
+                if ! fastboot flash "$partition" "$fullpath" \
+                    >"$output_file" 2>&1; then
 
-                        printf '%s' "$RED"
+                    printf '\n'
+                    printf '%sFlashing failed: %s%s\n' \
+                        "$RED" "$partition" "$RESET"
 
-                        cat "$TMP_DIR/fastboot_output"
-
-                        printf '%s\n' "$RESET"
-                    fi
-
-                    failed
+                    printf '\n'
+                    rainbow_cat "$output_file"
 
                     pause_failure
                     return
                 fi
-
                 ;;
 
             erase)
+                partition="$filename"
 
-                printf '%sErasing %s...%s\n' \
-                    "$GREEN" \
-                    "$arg1" \
-                    "$RESET"
+                if [ -z "$partition" ]; then
+                    continue
+                fi
 
-                if fastboot erase "$arg1" \
-                    >"$TMP_DIR/fastboot_output" \
-                    2>&1
-                then
+                progress=$((current_step * 100 / total_steps))
 
-                    success
+                rainbow_progress \
+                    "Erasing $partition — $progress%"
 
-                else
+                output_file="$TMP_DIR/fastboot_output.log"
+                rm -f "$output_file" 2>/dev/null
 
-                    failed
+                if ! fastboot erase "$partition" \
+                    >"$output_file" 2>&1; then
 
-                    printf '\n%sFastboot error:%s\n' \
-                        "$RED" \
-                        "$RESET"
+                    printf '\n'
+                    printf '%sErase failed: %s%s\n' \
+                        "$RED" "$partition" "$RESET"
 
-                    if [[ -s "$TMP_DIR/fastboot_output" ]]; then
-
-                        printf '%s' "$RED"
-
-                        cat "$TMP_DIR/fastboot_output"
-
-                        printf '%s\n' "$RESET"
-                    fi
+                    printf '\n'
+                    rainbow_cat "$output_file"
 
                     pause_failure
                     return
                 fi
-
                 ;;
 
             getvar)
+                printf '\n'
+                rainbow_print "Reading variable: $filename"
 
-                fastboot getvar "$arg1" \
-                    >"$TMP_DIR/fastboot_output" \
-                    2>&1 || true
-
+                fastboot getvar "$filename" >/dev/null 2>&1 || true
                 ;;
 
             oem)
+                progress=$((current_step * 100 / total_steps))
 
-                printf '%sRunning OEM step...%s\n' \
-                    "$GREEN" \
-                    "$RESET"
+                rainbow_progress \
+                    "Running fastboot oem $filename — $progress%"
 
-                read -r -a oem_args <<< "$arg1"
+                output_file="$TMP_DIR/fastboot_output.log"
+                rm -f "$output_file" 2>/dev/null
 
-                if fastboot oem "${oem_args[@]}" \
-                    >"$TMP_DIR/fastboot_output" \
-                    2>&1
-                then
+                if ! fastboot oem "$filename" \
+                    >"$output_file" 2>&1; then
 
-                    success
+                    printf '\n'
+                    printf '%sOEM command failed: %s%s\n' \
+                        "$RED" "$filename" "$RESET"
 
-                else
-
-                    failed
-
-                    printf '\n%sFastboot error:%s\n' \
-                        "$RED" \
-                        "$RESET"
-
-                    if [[ -s "$TMP_DIR/fastboot_output" ]]; then
-
-                        printf '%s' "$RED"
-
-                        cat "$TMP_DIR/fastboot_output"
-
-                        printf '%s\n' "$RESET"
-                    fi
+                    printf '\n'
+                    rainbow_cat "$output_file"
 
                     pause_failure
                     return
                 fi
-
                 ;;
 
             *)
+                progress=$((current_step * 100 / total_steps))
 
-                printf \
-                    '%sUnsupported operation: %s%s\n' \
-                    "$RED" \
-                    "$type" \
-                    "$RESET"
-
-                pause_failure
-                return
+                rainbow_progress \
+                    "Unsupported operation: $operation — $progress%"
                 ;;
-
         esac
 
-        plan_index=$((plan_index + 1))
+    done < "$parser_output"
 
-    done
+    # --------------------------------------------------------
+    # Flash final collected super group
+    # --------------------------------------------------------
+
+    if [ "$in_super_group" -eq 1 ]; then
+
+        if ! flash_super_group "$xml_dir" "${super_chunks[@]}"; then
+            failed
+            rainbow_print "Stock ROM flashing failed."
+            pause_failure
+            return
+        fi
+    fi
+
+    printf '\n'
+    success
+    green_print "Stock ROM flashing completed successfully! ✅"
+
+    # --------------------------------------------------------
+    # Delete ONLY temporary extracted archive
+    # --------------------------------------------------------
+
+    if [ "$STOCK_SOURCE_IS_ARCHIVE" -eq 1 ] &&
+       [ -n "$STOCK_TEMP_DIR" ] &&
+       [ -d "$STOCK_TEMP_DIR" ]; then
+
+        printf '\n'
+        warning "Removing temporary extracted Stock ROM..."
+
+        rm -rf "$STOCK_TEMP_DIR"
+
+        if [ ! -d "$STOCK_TEMP_DIR" ]; then
+            success
+            green_print "Temporary extracted Stock ROM deleted successfully. 🗑️"
+        else
+            warning "Unable to completely remove temporary extracted files."
+        fi
+    fi
 
     printf '\n'
 
-    printf '%sStock ROM flashing completed.%s\n' \
-        "$GREEN" \
-        "$RESET"
-
-    success
-
     flash_complete_menu
+}
+
+# ============================================================
+# FLASH COMPLETE MENU
+# ============================================================
+
+flash_complete_menu() {
+    while true; do
+        clear_screen
+        show_header
+
+        rainbow_print '╔══════════════════════════════════════╗'
+        rainbow_print '║          FLASH COMPLETE              ║'
+        rainbow_print '╠══════════════════════════════════════╣'
+        rainbow_print '║                                      ║'
+        rainbow_print '║  1. Reboot To Recovery               ║'
+        rainbow_print '║  2. Reboot To System                 ║'
+        rainbow_print '║                                      ║'
+        rainbow_print '╚══════════════════════════════════════╝'
+        printf '\n'
+
+        rainbow_prompt "Select option: "
+        read -r choice
+
+        case "$choice" in
+            1)
+                printf '\n'
+                rainbow_prompt "Reboot to recovery? [y/N]: "
+                read -r confirm
+
+                case "$confirm" in
+                    y|Y)
+                        if fastboot reboot recovery >/dev/null 2>&1; then
+                            success
+                        else
+                            failed
+                        fi
+                        sleep 2
+                        return
+                        ;;
+                esac
+                ;;
+
+            2)
+                printf '\n'
+                rainbow_prompt "Reboot to system? [y/N]: "
+                read -r confirm
+
+                case "$confirm" in
+                    y|Y)
+                        if fastboot reboot >/dev/null 2>&1; then
+                            success
+                        else
+                            failed
+                        fi
+                        sleep 2
+                        return
+                        ;;
+                esac
+                ;;
+        esac
+    done
 }
 
 # ============================================================
 # ADB SIDELOAD
 # ============================================================
 
-adb_sideload_rom() {
-
+adb_sideload() {
     clear_screen
     show_header
 
-    printf '%s' "$GREEN"
+    rainbow_print "ADB SIDELOAD"
+    rainbow_print "──────────────────────────────────────"
+    printf '\n'
 
-    printf '╔══════════════════════════════════════╗\n'
-    printf '║         ADB SIDELOAD                 ║\n'
-    printf '╚══════════════════════════════════════╝\n'
-
-    printf '%s\n\n' "$RESET"
-
-    printf 'Enter path to ROM zip:\n\n'
-
-    read -r rom
-
-    rom="$(resolve_path "$rom")"
-
-    if [[ ! -f "$rom" ]]; then
-
-        printf '%sROM zip not found.%s\n' \
-            "$RED" \
-            "$RESET"
-
+    if ! check_adb_sideload_device; then
+        failed
+        red_print "No ADB sideload device detected."
+        warning "Boot the device into ADB Sideload mode first."
         pause_failure
         return
     fi
 
-    if ! require_adb_sideload; then
-        pause_failure
-        return
-    fi
+    show_device_info
 
     printf '\n'
-    printf 'Starting ADB sideload...\n\n'
+    rainbow_print "Enter path to ROM zip:"
+    rainbow_prompt ">>> "
+    read -r ROM
 
-    local output_file="$TMP_DIR/adb_sideload_output"
-
-    local pid
-    local last_percent=""
-    local percent=""
-    local rc
-
-    : > "$output_file"
-
-    (
-        adb sideload "$rom" \
-            >"$output_file" \
-            2>&1
-    ) &
-
-    pid=$!
-
-    while kill -0 "$pid" 2>/dev/null; do
-
-        percent="$(
-            grep -oE '[0-9]{1,3}%' \
-                "$output_file" \
-                2>/dev/null |
-            tail -n 1 |
-            tr -d '%' ||
-            true
-        )"
-
-        if [[ -n "$percent" &&
-              "$percent" != "$last_percent" ]]; then
-
-            if (( percent > 100 )); then
-                percent=100
-            fi
-
-            printf \
-                '\r\033[K%sSideloading — %s%%%s' \
-                "$GREEN" \
-                "$percent" \
-                "$RESET"
-
-            last_percent="$percent"
-        fi
-
-        sleep 0.15
-    done
-
-    wait "$pid"
-    rc=$?
-
-    if (( rc == 0 )); then
-
-        printf \
-            '\r\033[K%sSideloading — 100%%%s\n' \
-            "$GREEN" \
-            "$RESET"
-
-        printf '\n'
-
-        success
-
-        flash_complete_menu
-
+    if [ -z "$ROM" ]; then
+        failed
+        rainbow_print "No ROM path entered."
+        pause_failure
         return
     fi
 
-    printf \
-        '\r\033[K%sSideloading — Failed ❌%s\n\n' \
-        "$RED" \
-        "$RESET"
+    ROM="$(resolve_path "$ROM")"
 
-    printf '%sADB error:%s\n' \
-        "$RED" \
-        "$RESET"
-
-    if [[ -s "$output_file" ]]; then
-
-        printf '%s' "$RED"
-
-        cat "$output_file"
-
-        printf '%s\n' "$RESET"
+    if [ ! -f "$ROM" ]; then
+        failed
+        rainbow_print "ROM file not found:"
+        rainbow_print "$ROM"
+        pause_failure
+        return
     fi
 
-    failed
+    local sideload_output="$TMP_DIR/sideload_output.log"
 
-    pause_failure
+    rm -f "$sideload_output" 2>/dev/null
+
+    printf '\n'
+    rainbow_print "Starting ADB sideload..."
+
+    # IMPORTANT:
+    # ROM ZIP is passed directly to adb sideload.
+    # No ZIP/RAR/7Z extraction is performed here.
+
+    adb sideload "$ROM" >"$sideload_output" 2>&1 &
+    local sideload_pid=$!
+
+    local progress
+    local last_progress=-1
+
+    while kill -0 "$sideload_pid" 2>/dev/null; do
+
+        if [ -f "$sideload_output" ]; then
+            progress="$(
+                grep -oE '[0-9]{1,3}%' "$sideload_output" 2>/dev/null |
+                tail -n1 |
+                tr -d '%'
+            )"
+
+            if [ -n "$progress" ] &&
+               [ "$progress" != "$last_progress" ]; then
+
+                if [ "$progress" -gt 100 ] 2>/dev/null; then
+                    progress=100
+                fi
+
+                rainbow_progress "Sideloading — $progress%"
+
+                last_progress="$progress"
+            fi
+        fi
+
+        sleep 1
+    done
+
+    wait "$sideload_pid"
+    local result=$?
+
+    printf '\n'
+
+    if [ "$result" -eq 0 ]; then
+        success
+    else
+        failed
+        rainbow_print "ADB sideload failed."
+
+        printf '\n'
+        rainbow_cat "$sideload_output"
+
+        pause_failure
+        return
+    fi
+
+    sleep 2
 }
 
 # ============================================================
@@ -1793,72 +1412,66 @@ adb_sideload_rom() {
 # ============================================================
 
 boot_twrp() {
-
     clear_screen
     show_header
 
-    printf '%s' "$GREEN"
+    rainbow_print "BOOT TWRP"
+    rainbow_print "──────────────────────────────────────"
+    printf '\n'
 
-    printf '╔══════════════════════════════════════╗\n'
-    printf '║            BOOT TWRP                 ║\n'
-    printf '╚══════════════════════════════════════╝\n'
-
-    printf '%s\n\n' "$RESET"
-
-    printf 'Enter path to TWRP img:\n\n'
-
-    read -r twrp
-
-    twrp="$(resolve_path "$twrp")"
-
-    if [[ ! -f "$twrp" ]]; then
-
-        printf '%sTWRP image not found.%s\n' \
-            "$RED" \
-            "$RESET"
-
+    if ! check_fastboot_device; then
+        failed
+        red_print "No Fastboot device detected."
         pause_failure
         return
     fi
 
-    if ! require_fastboot_device; then
+    show_device_info
+
+    printf '\n'
+    rainbow_print "Enter path to TWRP img:"
+    rainbow_prompt ">>> "
+    read -r twrp
+
+    if [ -z "$twrp" ]; then
+        failed
+        rainbow_print "No TWRP image path entered."
+        pause_failure
+        return
+    fi
+
+    twrp="$(resolve_path "$twrp")"
+
+    if [ ! -f "$twrp" ]; then
+        failed
+        rainbow_print "TWRP image not found:"
+        rainbow_print "$twrp"
         pause_failure
         return
     fi
 
     printf '\n'
+    rainbow_print "Booting TWRP..."
 
-    printf '%sBooting TWRP...%s\n' \
-        "$GREEN" \
-        "$RESET"
+    local output_file="$TMP_DIR/twrp_output.log"
 
-    local output_file="$TMP_DIR/twrp_output"
+    rm -f "$output_file" 2>/dev/null
 
-    if fastboot boot "$twrp" \
-        >"$output_file" \
-        2>&1
-    then
+    # IMPORTANT:
+    # TWRP IMG is passed directly to fastboot boot.
+    # No archive extraction is performed here.
 
+    if fastboot boot "$twrp" >"$output_file" 2>&1; then
         success
+    else
+        failed
+        printf '\n'
+        rainbow_cat "$output_file"
+        pause_failure
         return
     fi
 
-    failed
-
-    printf '\n%sFastboot error:%s\n' \
-        "$RED" \
-        "$RESET"
-
-    if [[ -s "$output_file" ]]; then
-
-        printf '%s' "$RED"
-
-        cat "$output_file"
-
-        printf '%s\n' "$RESET"
-    fi
-
-    pause_failure
+    sleep 2
 }
 
 # ============================================================
@@ -1866,32 +1479,27 @@ boot_twrp() {
 # ============================================================
 
 custom_rom_menu() {
-
     while true; do
-
         clear_screen
         show_header
 
-        printf '%s' "$GREEN"
+        rainbow_print '╔══════════════════════════════════════╗'
+        rainbow_print '║           CUSTOM ROM FLASH           ║'
+        rainbow_print '╠══════════════════════════════════════╣'
+        rainbow_print '║                                      ║'
+        rainbow_print '║  1. ADB Sideload                     ║'
+        rainbow_print '║  2. Boot TWRP                        ║'
+        rainbow_print '║                                      ║'
+        rainbow_print '║  3. Back                             ║'
+        rainbow_print '╚══════════════════════════════════════╝'
+        printf '\n'
 
-        printf '╔══════════════════════════════════════╗\n'
-        printf '║           CUSTOM ROM FLASH           ║\n'
-        printf '╠══════════════════════════════════════╣\n'
-        printf '║                                      ║\n'
-        printf '║  1. ADB Sideload                     ║\n'
-        printf '║  2. Boot TWRP                        ║\n'
-        printf '║                                      ║\n'
-        printf '║  3. Back                             ║\n'
-        printf '╚══════════════════════════════════════╝\n'
-
-        printf '%s\n' "$RESET"
-
-        read -r -p "Select: " choice
+        rainbow_prompt "Select option: "
+        read -r choice
 
         case "$choice" in
-
             1)
-                adb_sideload_rom
+                adb_sideload
                 ;;
 
             2)
@@ -1901,9 +1509,7 @@ custom_rom_menu() {
             3)
                 return
                 ;;
-
         esac
-
     done
 }
 
@@ -1912,103 +1518,78 @@ custom_rom_menu() {
 # ============================================================
 
 reboot_menu() {
-
     while true; do
-
         clear_screen
         show_header
 
-        printf '%s' "$GREEN"
+        rainbow_print '╔══════════════════════════════════════╗'
+        rainbow_print '║              REBOOT                  ║'
+        rainbow_print '╠══════════════════════════════════════╣'
+        rainbow_print '║                                      ║'
+        rainbow_print '║  1. adb reboot recovery              ║'
+        rainbow_print '║  2. adb reboot bootloader            ║'
+        rainbow_print '║  3. fastboot reboot recovery         ║'
+        rainbow_print '║                                      ║'
+        rainbow_print '║  4. Back                             ║'
+        rainbow_print '╚══════════════════════════════════════╝'
+        printf '\n'
 
-        printf '╔══════════════════════════════════════╗\n'
-        printf '║              REBOOT                  ║\n'
-        printf '╠══════════════════════════════════════╣\n'
-        printf '║                                      ║\n'
-        printf '║  1. adb reboot recovery              ║\n'
-        printf '║  2. adb reboot bootloader            ║\n'
-        printf '║  3. fastboot reboot recovery         ║\n'
-        printf '║                                      ║\n'
-        printf '║  4. Back                             ║\n'
-        printf '╚══════════════════════════════════════╝\n'
-
-        printf '%s\n' "$RESET"
-
-        read -r -p "Select: " choice
+        rainbow_prompt "Select option: "
+        read -r choice
 
         case "$choice" in
-
             1)
-
-                clear_screen
-                show_header
-
                 if ! require_adb_device; then
                     pause_failure
                     continue
                 fi
 
-                printf '\n'
-
-                if adb reboot recovery \
-                    >/dev/null 2>&1
-                then
+                if adb reboot recovery >/dev/null 2>&1; then
                     success
                 else
                     failed
+                    pause_failure
                 fi
 
+                sleep 2
                 ;;
 
             2)
-
-                clear_screen
-                show_header
-
                 if ! require_adb_device; then
                     pause_failure
                     continue
                 fi
 
-                printf '\n'
-
-                if adb reboot bootloader \
-                    >/dev/null 2>&1
-                then
+                if adb reboot bootloader >/dev/null 2>&1; then
                     success
                 else
                     failed
+                    pause_failure
                 fi
 
+                sleep 2
                 ;;
 
             3)
-
-                clear_screen
-                show_header
-
                 if ! require_fastboot_device; then
                     pause_failure
                     continue
                 fi
 
-                printf '\n'
-
-                if fastboot reboot recovery \
-                    >/dev/null 2>&1
-                then
+                if fastboot reboot recovery >/dev/null 2>&1; then
                     success
                 else
                     failed
+                    pause_failure
                 fi
 
+                sleep 2
                 ;;
 
             4)
                 return
                 ;;
-
         esac
-
     done
 }
 
@@ -2017,234 +1598,146 @@ reboot_menu() {
 # ============================================================
 
 wipe_data() {
-
-    clear_screen
-    show_header
-
-    printf '%s' "$GREEN"
-
-    printf '╔══════════════════════════════════════╗\n'
-    printf '║             WIPE DATA                ║\n'
-    printf '╠══════════════════════════════════════╣\n'
-    printf '║                                      ║\n'
-    printf '║  Do you want to wipe data?           ║\n'
-    printf '║                                      ║\n'
-    printf '║  1. YES                              ║\n'
-    printf '║  2. NO                               ║\n'
-    printf '║                                      ║\n'
-    printf '╚══════════════════════════════════════╝\n'
-
-    printf '%s\n' "$RESET"
-
     while true; do
+        clear_screen
+        show_header
 
-        read -r -p "Select [y/n]: " answer
+        rainbow_print '╔══════════════════════════════════════╗'
+        rainbow_print '║              WIPE DATA              ║'
+        rainbow_print '╠══════════════════════════════════════╣'
+        rainbow_print '║                                      ║'
+        rainbow_print '║  1. YES                              ║'
+        rainbow_print '║  2. NO                               ║'
+        rainbow_print '║                                      ║'
+        rainbow_print '╚══════════════════════════════════════╝'
+        printf '\n'
 
-        case "${answer,,}" in
+        rainbow_prompt "Select option: "
+        read -r choice
 
-            y)
-                break
-                ;;
+        case "$choice" in
+            1)
+                if ! require_fastboot_device; then
+                    pause_failure
+                    continue
+                fi
 
-            n)
+                printf '\n'
+                warning "Wiping userdata and metadata..."
+
+                local wipe_output="$TMP_DIR/wipe_output.log"
+
+                rm -f "$wipe_output" 2>/dev/null
+
+                if fastboot -w >"$wipe_output" 2>&1; then
+                    success
+                else
+                    failed
+                    printf '\n'
+                    rainbow_cat "$wipe_output"
+                    pause_failure
+                fi
+
+                sleep 2
                 return
                 ;;
 
-            *)
+            2)
+                return
+                ;;
+
+            y|Y)
+                if ! require_fastboot_device; then
+                    pause_failure
+                    continue
+                fi
+
+                printf '\n'
+                warning "Wiping userdata and metadata..."
+
+                if fastboot -w >/dev/null 2>&1; then
+                    success
+                else
+                    failed
+                    pause_failure
+                fi
+
+                sleep 2
+                return
+                ;;
+
+            n|N)
+                return
                 ;;
         esac
-
     done
+}
 
-    if ! require_fastboot_device; then
-        pause_failure
-        return
-    fi
+# ============================================================
+# MAIN MENU
+# ============================================================
 
+main_menu() {
+    while true; do
+        clear_screen
+        show_header
+
+        rainbow_print '╔══════════════════════════════════════╗'
+        rainbow_print '║                                      ║'
+        rainbow_print '║  1. Flash Stock ROM                  ║'
+        rainbow_print '║  2. Flash Custom ROM                 ║'
+        rainbow_print '║  3. Reboot                           ║'
+        rainbow_print '║  4. Wipe Data                        ║'
+        rainbow_print '║  5. Exit                             ║'
+        rainbow_print '║                                      ║'
+        rainbow_print '╚══════════════════════════════════════╝'
+        printf '\n'
+
+        rainbow_prompt "Select option: "
+        read -r choice
+
+        case "$choice" in
+            1)
+                flash_stock_rom
+                ;;
+
+            2)
+                custom_rom_menu
+                ;;
+
+            3)
+                reboot_menu
+                ;;
+
+            4)
+                wipe_data
+                ;;
+
+            5)
+                clear_screen
+                show_header
+                rainbow_print "Goodbye! 👋"
+                exit 0
+                ;;
+        esac
+    done
+}
+
+# ============================================================
+# START
+# ============================================================
+
+if ! startup_setup; then
     printf '\n'
-    printf 'Wiping data...\n'
+    failed
+    rainbow_print "Startup setup failed."
+    rainbow_print "Please check your Termux package installation."
+    exit 1
+fi
 
-    if fastboot -w \
-        >"$TMP_DIR/wipe_data" \
-        2>&1
-    then
-
-        printf '%sData wipe — Successful ✅%s\n' \
-            "$GREEN" \
-            "$RESET"
-
-    else
-
-        printf '%sData wipe — Failed ❌%s\n' \
-            "$RED" \
-            "$RESET"
-
-        printf '\n%s' "$RED"
-
-        cat "$TMP_DIR/wipe_data"
-
-        printf '%s\n' "$RESET"
-
-        pause_failure
-        return
-    fi
-}
-
-# ============================================================
-# FLASH COMPLETE MENU
-# ============================================================
-
-flash_complete_menu() {
-
-    while true; do
-
-        printf '\n'
-
-        printf '%s' "$GREEN"
-
-        printf '╔══════════════════════════════════════╗\n'
-        printf '║          FLASH COMPLETE              ║\n'
-        printf '╠══════════════════════════════════════╣\n'
-        printf '║                                      ║\n'
-        printf '║  1. Reboot To Recovery               ║\n'
-        printf '║  2. Reboot To System                 ║\n'
-        printf '║                                      ║\n'
-        printf '╚══════════════════════════════════════╝\n'
-
-        printf '%s\n' "$RESET"
-
-        read -r -p "Select: " choice
-
-        case "$choice" in
-
-            1)
-
-                printf '\n'
-                printf 'Do you want to Reboot To Recovery?\n'
-
-                read -r -p "Select [y/n]: " answer
-
-                case "${answer,,}" in
-
-                    y)
-
-                        if check_fastboot_device &&
-                           fastboot reboot recovery \
-                               >/dev/null 2>&1
-                        then
-
-                            success
-
-                        else
-
-                            failed
-
-                        fi
-
-                        return
-                        ;;
-
-                    n)
-                        return
-                        ;;
-
-                esac
-
+main_menu 0
                 ;;
-
-            2)
-
-                printf '\n'
-                printf 'Do you want to Reboot To System?\n'
-
-                read -r -p "Select [y/n]: " answer
-
-                case "${answer,,}" in
-
-                    y)
-
-                        if check_fastboot_device &&
-                           fastboot reboot \
-                               >/dev/null 2>&1
-                        then
-
-                            success
-
-                        else
-
-                            failed
-
-                        fi
-
-                        return
-                        ;;
-
-                    n)
-                        return
-                        ;;
-
-                esac
-
-                ;;
-
         esac
-
-    done
-}
-
-# ============================================================
-# MAIN MENU
-# ============================================================
-
-main_menu() {
-
-    while true; do
-
-        clear_screen
-        show_header
-
-        printf '%s' "$GREEN"
-
-        printf '╔══════════════════════════════════════╗\n'
-        printf '║                                      ║\n'
-        printf '║  1. Flash Stock ROM                  ║\n'
-        printf '║  2. Flash Custom ROM                 ║\n'
-        printf '║  3. Reboot                           ║\n'
-        printf '║  4. Wipe Data                        ║\n'
-        printf '║  5. Exit                             ║\n'
-        printf '║                                      ║\n'
-        printf '╚══════════════════════════════════════╝\n'
-
-        printf '%s\n' "$RESET"
-
-        read -r -p "Select: " choice
-
-        case "$choice" in
-
-            1)
-                flash_stock_rom
-                ;;
-
-            2)
-                custom_rom_menu
-                ;;
-
-            3)
-                reboot_menu
-                ;;
-
-            4)
-                wipe_data
-                ;;
-
-            5)
-
-                clear_screen
-                exit 0
-                ;;
-
-        esac
-
     done
 }
 
@@ -2252,191 +1745,12 @@ main_menu() {
 # START
 # ============================================================
 
-cleanup
-
-startup_setup
-
-main_menu  else
-
-        printf '%sData wipe — Failed ❌%s\n' \
-            "$RED" \
-            "$RESET"
-
-        printf '\n%s' "$RED"
-
-        cat "$TMP_DIR/wipe_data"
-
-        printf '%s\n' "$RESET"
-
-        pause_failure
-        return
-    fi
-}
-
-# ============================================================
-# FLASH COMPLETE MENU
-# ============================================================
-
-flash_complete_menu() {
-
-    while true; do
-
-        printf '\n'
-
-        printf '%s' "$GREEN"
-
-        printf '╔══════════════════════════════════════╗\n'
-        printf '║          FLASH COMPLETE              ║\n'
-        printf '╠══════════════════════════════════════╣\n'
-        printf '║                                      ║\n'
-        printf '║  1. Reboot To Recovery               ║\n'
-        printf '║  2. Reboot To System                 ║\n'
-        printf '║                                      ║\n'
-        printf '╚══════════════════════════════════════╝\n'
-
-        printf '%s\n' "$RESET"
-
-        read -r -p "Select: " choice
-
-        case "$choice" in
-
-            1)
-
-                printf '\n'
-                printf 'Do you want to Reboot To Recovery?\n'
-
-                read -r -p "Select [y/n]: " answer
-
-                case "${answer,,}" in
-
-                    y)
-
-                        if check_fastboot_device &&
-                           fastboot reboot recovery \
-                               >/dev/null 2>&1
-                        then
-
-                            success
-
-                        else
-
-                            failed
-
-                        fi
-
-                        return
-                        ;;
-
-                    n)
-                        return
-                        ;;
-
-                esac
-
-                ;;
-
-            2)
-
-                printf '\n'
-                printf 'Do you want to Reboot To System?\n'
-
-                read -r -p "Select [y/n]: " answer
-
-                case "${answer,,}" in
-
-                    y)
-
-                        if check_fastboot_device &&
-                           fastboot reboot \
-                               >/dev/null 2>&1
-                        then
-
-                            success
-
-                        else
-
-                            failed
-
-                        fi
-
-                        return
-                        ;;
-
-                    n)
-                        return
-                        ;;
-
-                esac
-
-                ;;
-
-        esac
-
-    done
-}
-
-# ============================================================
-# MAIN MENU
-# ============================================================
-
-main_menu() {
-
-    while true; do
-
-        clear_screen
-        show_header
-
-        printf '%s' "$GREEN"
-
-        printf '╔══════════════════════════════════════╗\n'
-        printf '║                                      ║\n'
-        printf '║  1. Flash Stock ROM                  ║\n'
-        printf '║  2. Flash Custom ROM                 ║\n'
-        printf '║  3. Reboot                           ║\n'
-        printf '║  4. Wipe Data                        ║\n'
-        printf '║  5. Exit                             ║\n'
-        printf '║                                      ║\n'
-        printf '╚══════════════════════════════════════╝\n'
-
-        printf '%s\n' "$RESET"
-
-        read -r -p "Select: " choice
-
-        case "$choice" in
-
-            1)
-                flash_stock_rom
-                ;;
-
-            2)
-                custom_rom_menu
-                ;;
-
-            3)
-                reboot_menu
-                ;;
-
-            4)
-                wipe_data
-                ;;
-
-            5)
-
-                clear_screen
-                exit 0
-                ;;
-
-        esac
-
-    done
-}
-
-# ============================================================
-# START
-# ============================================================
-
-cleanup
-
-startup_setup
+if ! startup_setup; then
+    printf '\n'
+    failed
+    rainbow_print "Startup setup failed."
+    rainbow_print "Please check your Termux package installation."
+    exit 1
+fi
 
 main_menu
