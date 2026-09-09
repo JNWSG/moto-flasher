@@ -36,3 +36,5 @@ chmod +x moto-flasher.sh
 ```
 ./moto-flasher.sh
 ```
+### If you have any questions, DM me
+[JNW_SG](https://t.me/JNW_SG)
